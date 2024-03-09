@@ -12,6 +12,7 @@ import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import io.netty.util.internal.StringUtil;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -35,18 +36,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     private StringRedisTemplate stringRedisTemplate;
 
     @Override
-    public Result queryById(Long id) {
-        String shopJson = stringRedisTemplate.opsForValue().get(CACHE_SHOP_KEY + id);
-        if (StrUtil.isNotBlank(shopJson)) {
-            Shop shop = JSONUtil.toBean(shopJson, Shop.class);
-            return Result.ok(shop);
-        }
-
-        Shop shop = getById(id);
-        if (shop == null) {
-            return Result.fail("not exist");
-        }
-        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(shop));
-        return Result.ok(shop);
+    @Cacheable(value = CACHE_SHOP_KEY, key = "#id", unless = "#result == null")
+    public Shop getById(Serializable id) {
+        return super.getById(id);
     }
 }

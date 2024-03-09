@@ -33,7 +33,11 @@ public class ShopController {
      */
     @GetMapping("/{id}")
     public Result queryShopById(@PathVariable("id") Long id) {
-        return shopService.queryById(id);
+        Shop shop = shopService.getById(id);
+        if (shop == null) {
+            return Result.fail("not find shop");
+        }
+        return Result.ok(shop);
     }
 
     /**
