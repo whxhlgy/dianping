@@ -1,9 +1,11 @@
 package com.hmdp.service;
 
 import com.hmdp.entity.Shop;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -17,10 +19,16 @@ public class CacheService {
     @Resource
     IShopService shopService;
 
-    @Cacheable(value = CACHE_SHOP_KEY, key = "#id", unless = "#result == null")
-    public Shop getShop(Long id) {
-        return shopService.getById(id);
+    @Resource
+    StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    CacheManager cacheManager;
+
+    public Shop getShopCache(Long id) {
+        return cacheManager.getCache(CACHE_SHOP_KEY).get(id, Shop.class);
     }
+
 
     @CachePut(value = CACHE_SHOP_KEY, key = "#shop.id", unless = "#result == null")
     public Shop updateShopCache(Shop shop) {
