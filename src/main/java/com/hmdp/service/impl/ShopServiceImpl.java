@@ -1,20 +1,17 @@
 package com.hmdp.service.impl;
 
-import ch.qos.logback.core.recovery.ResilientFileOutputStream;
-import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
+import com.hmdp.service.CacheService;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import io.netty.util.internal.StringUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.io.Serializable;
@@ -33,11 +30,21 @@ import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
 
     @Resource
-    private StringRedisTemplate stringRedisTemplate;
+    CacheService cacheService;
 
     @Override
     @Cacheable(value = CACHE_SHOP_KEY, key = "#id", unless = "#result == null")
     public Shop getById(Serializable id) {
         return super.getById(id);
+    }
+
+    @Override
+//    @Transactional // not work !
+    public Result updateShop(Shop shop) {
+        if (!updateById(shop)) {
+            return Result.fail("update failed");
+        }
+        cacheService.evictShopCache(shop.getId());
+        return Result.ok(shop);
     }
 }
