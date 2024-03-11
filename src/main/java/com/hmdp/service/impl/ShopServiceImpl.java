@@ -10,6 +10,7 @@ import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.CacheService;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisData;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -40,80 +41,21 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     CacheService cacheService;
 
     @Resource
-    CacheManager cacheManager;
-
-    @Resource
-    StringRedisTemplate stringRedisTemplate;
-
-    private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
+    CacheClient cacheClient;
 
     @Override
     public Shop queryById(Long id) {
-        // find cache
-        String key = CACHE_SHOP_KEY + "::" + id;
-        String shopJson = stringRedisTemplate.opsForValue().get(key);
-
-        if (shopJson != null) {
-            if (shopJson.isEmpty()) {
-                return null;
-            }
-            RedisData shopRedis = JSONUtil.toBean(shopJson, RedisData.class);
-            Shop shop = JSONUtil.toBean((JSONObject) shopRedis.getData(), Shop.class);
-            if (shopRedis.getExpireTime().isAfter(LocalDateTime.now())) {
-                return shop;
-            }
-        }
-
-        // case: not in the cache or expired
-
-        // create a new thread to get the value from db
-        if (setLock(id)) {
-            CACHE_REBUILD_EXECUTOR.submit(() -> {
-                Shop shopById = getById(id);
-                if (shopById == null) {
-                    stringRedisTemplate.opsForValue().set(key, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
-                } else {
-                    stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop2Redis(shopById)));
-                }
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    unLock(id);
-                }
-            });
-        }
-
-        if (shopJson == null) {
-            return null;
-        }
-        RedisData shopRedis = JSONUtil.toBean(shopJson, RedisData.class);
-        return JSONUtil.toBean((JSONObject) shopRedis.getData(), Shop.class);
-}
-
-private RedisData shop2Redis(Shop shop) {
-    RedisData redisData = new RedisData();
-    redisData.setData(shop);
-    redisData.setExpireTime(LocalDateTime.now().plusSeconds(10));
-    return redisData;
-}
-
-private boolean setLock(Long id) {
-    Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent("lock:shop" + id, "1");
-    return Boolean.TRUE.equals(flag);
-}
-
-private void unLock(Long id) {
-    stringRedisTemplate.delete("lock:shop" + id);
-}
-
-@Override
-public Result updateShop(Shop shop) {
-    if (!updateById(shop)) {
-        return Result.fail("update failed");
+        return cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById);
     }
-    cacheService.evictShopCache(shop.getId());
-    return Result.ok(shop);
-}
+
+
+
+    @Override
+    public Result updateShop(Shop shop) {
+        if (!updateById(shop)) {
+            return Result.fail("update failed");
+        }
+        cacheService.evictShopCache(shop.getId());
+        return Result.ok(shop);
+    }
 }
