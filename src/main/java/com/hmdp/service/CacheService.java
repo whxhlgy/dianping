@@ -25,10 +25,6 @@ public class CacheService {
     @Resource
     CacheManager cacheManager;
 
-    public Shop getShopCache(Long id) {
-        return cacheManager.getCache(CACHE_SHOP_KEY).get(id, Shop.class);
-    }
-
 
     @CachePut(value = CACHE_SHOP_KEY, key = "#shop.id", unless = "#result == null")
     public Shop updateShopCache(Shop shop) {
