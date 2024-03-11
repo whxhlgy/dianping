@@ -25,11 +25,19 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         String token = request.getHeader("authorization");
+        
+        if (token == null) {
+            return true;
+        }
 
         String tokenKey = LOGIN_USER_KEY1 + token;
         Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries(tokenKey);
+        
+        if (userMap.isEmpty()) {
+            return true;
+        }
 
-        // hide the important user information
+        // user -> userDTO (hide the important user information)
         UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
         // refresh the expiration time
         stringRedisTemplate.expire(tokenKey, 30, TimeUnit.MINUTES);
