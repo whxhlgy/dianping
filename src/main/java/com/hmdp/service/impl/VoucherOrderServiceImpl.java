@@ -16,7 +16,9 @@ import java.util.concurrent.locks.Lock;
 
 import javax.annotation.Resource;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,11 +42,14 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     private IVoucherOrderService orderService;
-    
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
     @Lazy
     @Resource
     VoucherOrderServiceImpl self;
-    
+
     final Striped<Lock> userLocks = Striped.lazyWeakLock(100);
 
     @Override
@@ -59,16 +64,17 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("you are not in the valid time period to use the voucher!");
         }
         Long userId = UserHolder.getUser().getId();
-        @SuppressWarnings("null")
-        Lock lock = userLocks.get(userId);
+        SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+        boolean isLock = lock.tryLock(1200);
+        if (!isLock) {
+            return Result.fail("you can only get the voucher once!");
+        }
         try {
-            lock.lock();
             return self.createVoucherOrder(voucherId, voucher);
         } finally {
             lock.unlock();
         }
     }
-
 
     @Transactional
     public Result createVoucherOrder(Long voucherId, SeckillVoucher voucher) {
