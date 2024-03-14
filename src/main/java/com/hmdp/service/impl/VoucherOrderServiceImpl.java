@@ -16,7 +16,7 @@ import java.util.concurrent.locks.Lock;
 
 import javax.annotation.Resource;
 
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -43,7 +43,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private IVoucherOrderService orderService;
 
-    @Resource
+    @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
     @Lazy
