@@ -39,7 +39,6 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Resource
     private IVoucherOrderService orderService;
 
-
     @Override
     public Result queryVoucherOfShop(Long shopId) {
         // 查询优惠券信息

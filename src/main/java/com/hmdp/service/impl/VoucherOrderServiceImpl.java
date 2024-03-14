@@ -12,10 +12,13 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.google.common.util.concurrent.Striped;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 
 import javax.annotation.Resource;
 
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -43,8 +46,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private IVoucherOrderService orderService;
 
-    @Autowired
+    @Resource
     private StringRedisTemplate stringRedisTemplate;
+    
+    @Resource
+    private RedissonClient redissonClient;
 
     @Lazy
     @Resource
@@ -64,15 +70,16 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("you are not in the valid time period to use the voucher!");
         }
         Long userId = UserHolder.getUser().getId();
-        SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
-        boolean isLock = lock.tryLock(1200);
-        if (!isLock) {
-            return Result.fail("you can only get the voucher once!");
-        }
-        try {
-            return self.createVoucherOrder(voucherId, voucher);
-        } finally {
-            lock.unlock();
+        // SimpleRedisLock lock = new SimpleRedisLock( stringRedisTemplate);
+        RLock lock = redissonClient.getLock("lock:order:" + userId);
+        if (lock.tryLock()) {
+            try {
+                return self.createVoucherOrder(voucherId, voucher);
+            } finally {
+                lock.unlock();
+            }
+        } else {
+            return Result.fail("you have already got the voucher!");
         }
     }
 
