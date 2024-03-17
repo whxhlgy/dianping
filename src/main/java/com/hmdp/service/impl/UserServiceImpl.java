@@ -60,15 +60,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (RegexUtils.isPhoneInvalid(loginForm.getPhone())) {
             return Result.fail("phone number not valid");
         }
+        // send code
         String code = stringRedisTemplate.opsForValue().get(LOGIN_CODE + loginForm.getPhone());
         if (code == null || !code.equals(loginForm.getCode())) {
             return Result.fail("not valid code");
         }
+        // check if the user exist by phone
         User user = query().eq("phone", loginForm.getPhone()).one();
         if (user == null) {
+            // if not exist, create and save it
             user = createUserWithPhone(loginForm.getPhone());
         }
-        // save the user
+        // save the user to redis
         String token = UUID.randomUUID().toString(true);
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
         Map<String, Object> userMap = BeanUtil.beanToMap(userDTO);
@@ -81,6 +84,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         return Result.ok(token);
     }
 
+    // create a random user with it's phone number 
     private User createUserWithPhone(String phone) {
         User user = new User();
         user.setPhone(phone);

@@ -23,5 +23,7 @@ spring:
 mybatis-plus:
   type-aliases-package: com.hmdp.entity # 别名扫描包
 logging:
+  file:
+    name: mylog.log
   level:
     com.hmdp: debug

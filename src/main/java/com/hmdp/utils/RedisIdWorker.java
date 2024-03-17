@@ -8,6 +8,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
+/**
+ * used to generate unique id
+ */
 @Component
 public class RedisIdWorker {
 
