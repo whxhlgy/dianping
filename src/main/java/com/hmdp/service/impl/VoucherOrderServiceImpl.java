@@ -1,7 +1,6 @@
 package com.hmdp.service.impl;
 
 import com.hmdp.dto.Result;
-import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
@@ -9,31 +8,31 @@ import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
 
+import cn.hutool.core.bean.BeanUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.google.common.util.concurrent.Striped;
 
-import static com.hmdp.utils.RedisConstants.SECKILL_STOCK_KEY;
-
-import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
-
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.redisson.config.Config;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.stream.Consumer;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.StreamOffset;
+import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -70,24 +69,61 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     private static final ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
 
-    private final BlockingQueue<VoucherOrder> orderTasks = new ArrayBlockingQueue<>(1024 * 1024);
-
     private class VoucherOrderHandler implements Runnable {
 
         @Override
         public void run() {
             while (true) {
-                VoucherOrder order;
                 try {
-                    order = orderTasks.take();
-                    orderSaveHandler(order);
-                } catch (InterruptedException e) {
-                    log.error("error when processing orders: ", e);
+                    // XGROUP GROUP g1 c1 COUNT 1 BLOCK 2000 STREAMS stream.orders >
+                    String streamKey = "stream.orders";
+                    @SuppressWarnings("unchecked")
+                    List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
+                            Consumer.from("g1", "c1"),
+                            StreamReadOptions.empty().block(Duration.ofSeconds(2)).count(1),
+                            StreamOffset.create(streamKey, ReadOffset.lastConsumed()));
+                    if (list == null || list.isEmpty()) {
+                        continue;
+                    }
+                    MapRecord<String,Object,Object> record = list.get(0);
+                    Map<Object,Object> valueMap = record.getValue();
+                    VoucherOrder order = BeanUtil.fillBeanWithMap(valueMap, new VoucherOrder(), true);
+                    handleOrder(order);
+                    // send ack
+                    stringRedisTemplate.opsForStream().acknowledge(streamKey, "g1", record.getId());
+                } catch (Exception e) {
+                    log.error("error when processsing orders:", e);
+                    handleError();
                 }
             }
         }
 
-        private void orderSaveHandler(VoucherOrder order) {
+        private void handleError() {
+            while (true) {
+                try {
+                    // read messages from pending list
+                    String streamKey = "stream.orders";
+                    @SuppressWarnings("unchecked")
+                    List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
+                            Consumer.from("g1", "c1"),
+                            StreamReadOptions.empty().count(1),
+                            StreamOffset.create(streamKey, ReadOffset.from("0")));
+                    if (list == null || list.isEmpty()) {
+                        break;
+                    }
+                    MapRecord<String,Object,Object> record = list.get(0);
+                    Map<Object,Object> valueMap = record.getValue();
+                    VoucherOrder order = BeanUtil.fillBeanWithMap(valueMap, new VoucherOrder(), true);
+                    handleOrder(order);
+                    // send ack
+                    stringRedisTemplate.opsForStream().acknowledge(streamKey, "g1", record.getId());
+                } catch (Exception e) {
+                    log.error("error when processsing orders in pending-list:", e);
+                }
+            }
+        }
+
+        private void handleOrder(VoucherOrder order) {
             RLock lock = redissonClient.getLock("lock:order:" + order.getUserId());
             if (!lock.tryLock()) {
                 log.error("no repeat orders");
@@ -117,23 +153,17 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Override
     public Result createSeckillOrder(Long voucherId) {
         Long userId = UserHolder.getUser().getId();
+        Long orderId = idWorker.nextID("order");
         // check if the seckill order valid
         Long res = stringRedisTemplate.execute(
                 SECKILL_SCRIPT,
                 Collections.emptyList(),
                 voucherId.toString(),
-                userId.toString());
+                userId.toString(),
+                orderId.toString());
         if (res != 0) {
             return Result.fail(res == 1 ? "no enough stock" : "no repeat orders");
         }
-
-        // add the order to queue
-        long orderId = idWorker.nextID("order");
-        VoucherOrder order = new VoucherOrder();
-        order.setId(orderId);
-        order.setUserId(userId);
-        order.setVoucherId(voucherId);
-        orderTasks.add(order);
         return Result.ok(orderId);
     }
 

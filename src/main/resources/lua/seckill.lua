@@ -6,6 +6,7 @@
 
 local voucherId = ARGV[1]
 local userId = ARGV[2]
+local orderId = ARGV[3]
 local voucherKey = 'seckill:stock:' .. voucherId
 local orderSetKey = 'seckill:order:' .. userId
 
@@ -25,6 +26,6 @@ end
 redis.call('DECR', voucherKey)
 -- add the user in orderSet
 redis.call('SADD', orderSetKey, voucherId)
--- 
--- 
+-- add order to message queue
+redis.call('XADD', 'stream.orders', '*', 'voucherId', voucherId, 'userId', userId, 'id', orderId)
 return 0
