@@ -1,6 +1,7 @@
 package com.hmdp.service.impl;
 
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.User;
@@ -15,16 +16,18 @@ import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 import javax.annotation.Resource;
 
+import org.checkerframework.checker.units.qual.min;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
+
+import static com.hmdp.utils.RedisConstants.FEED_KEY;
 
 /**
  * <p>
@@ -44,6 +47,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    
+    @Resource
+    private IBlogService blogService;
 
     @Override
     public Result queryBlogById(Long id) {
@@ -135,5 +141,50 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .stream()
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
         return Result.ok(userDTOs);
+    }
+
+    @Override
+    public Result queryBlogOfFollow(Long max, Integer offset) {
+        // current user
+        UserDTO user = UserHolder.getUser();
+        // check the inbox of the user
+        String key = FEED_KEY + user.getId();
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, max, offset, 3);
+        if (typedTuples == null || typedTuples.isEmpty()) {
+            return Result.ok(new ScrollResult());
+        }
+        // resolve the data in redis
+        // we need blogId, minTime, offset
+        Long minTime = 0L;
+        int os = 1;
+        List<Long> ids = new ArrayList<>(typedTuples.size());
+        for (ZSetOperations.TypedTuple<String> typedTuple : typedTuples) {
+            long blogId = Long.parseLong(Objects.requireNonNull(typedTuple.getValue()));
+            ids.add(blogId);
+            long time = Objects.requireNonNull(typedTuple.getScore()).longValue();
+            if (time == minTime) {
+                os++;
+            } else {
+                os = 1;
+                minTime = time;
+            }
+        }
+        // check if the minTime is aligning to maxTime, if true, need to skip offset again
+        os = minTime.equals(max) ? os + offset : os;
+        // query all the blogs of ids
+        String idsStr = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
+        List<Blog> blogs = blogService.query()
+                .in("id", ids)
+                .last("ORDER BY FIELD(id, " + idsStr + ")").list();
+        blogs.forEach(blog -> {
+            getUser(blog);
+            getLiked(blog);
+        });
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setMinTime(minTime);
+        scrollResult.setOffset(os);
+        return Result.ok(scrollResult);
     }
 }

@@ -3,19 +3,25 @@ package com.hmdp.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.service.IBlogService;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+
+import static com.hmdp.utils.RedisConstants.FEED_KEY;
 
 
 /**
@@ -34,6 +40,21 @@ public class BlogController {
     private IBlogService blogService;
     @Resource
     private IUserService userService;
+    @Resource
+    private IFollowService followService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @GetMapping("/of/user")
+    public Result getUserBlogs(
+            @RequestParam(value = "id", defaultValue = "1") Long id,
+            @RequestParam(value = "current") Integer current
+    ) {
+        Page<Blog> userPage = blogService.query().eq("user_id", id).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        List<Blog> records = userPage.getRecords();
+        return Result.ok(records);
+    }
     
     @GetMapping("/{id}")
     public Result queryBlogById(@PathVariable Long id) {
@@ -50,9 +71,18 @@ public class BlogController {
     public Result saveBlog(@RequestBody Blog blog) {
         // 获取登录用户
         UserDTO user = UserHolder.getUser();
+        Long userId = user.getId();
         blog.setUserId(user.getId());
         // 保存探店博文
         blogService.save(blog);
+        // save to redis
+        // and push to all the follows
+        List<Follow> follows = followService.query().eq("follow_user_id", userId).list();
+        for (Follow follow : follows) {
+            Long followeeId = follow.getUserId();
+            String key = FEED_KEY + followeeId;
+            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
+        }
         // 返回id
         return Result.ok(blog.getId());
     }
@@ -73,6 +103,11 @@ public class BlogController {
         // 获取当前页数据
         List<Blog> records = page.getRecords();
         return Result.ok(records);
+    }
+
+    @GetMapping("/of/follow")
+    public Result queryBlogOfFollow(@RequestParam("lastId") Long max, @RequestParam(value = "offset", defaultValue = "0") Integer offset) {
+        return blogService.queryBlogOfFollow(max, offset);
     }
 
     @GetMapping("/hot")
