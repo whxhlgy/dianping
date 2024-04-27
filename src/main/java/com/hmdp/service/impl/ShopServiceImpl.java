@@ -47,9 +47,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     public Shop queryById(Long id) {
         return cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById);
     }
-
-
-
     @Override
     public Result updateShop(Shop shop) {
         if (!updateById(shop)) {

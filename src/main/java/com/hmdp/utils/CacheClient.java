@@ -2,7 +2,6 @@ package com.hmdp.utils;
 
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import com.hmdp.entity.Shop;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static com.hmdp.utils.RedisConstants.CACHE_NULL_TTL;
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
 
 @Component
 public class CacheClient {
@@ -24,40 +22,33 @@ public class CacheClient {
     @Resource
     StringRedisTemplate stringRedisTemplate;
 
-    public void set(String key, Object value, Long timeOut, TimeUnit unit) {
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(value), timeOut, unit);
-    }
-
-    public void setWithLogicalExpire(String key, Object value, Long timeOut, TimeUnit unit) {
-        RedisData redisData = new RedisData();
-        redisData.setExpireTime(LocalDateTime.now().plusSeconds(unit.toSeconds(timeOut)));
-        redisData.setData(value);
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(redisData));
-    }
-
+    /**
+     * query redis data with logical expire
+     */
     public <ID, T> T queryWithLogicalExpire(String prefix, ID id, Class<T> tClass, Function<ID, T> dbCallBack) {
         // find cache
         String key = prefix + "::" + id;
         String json = stringRedisTemplate.opsForValue().get(key);
 
         if (json != null) {
-            if (json.isEmpty()) {
+            if (json.isEmpty()) { // case: not in db
                 return null;
             }
             RedisData redisData = JSONUtil.toBean(json, RedisData.class);
             T rst = JSONUtil.toBean((JSONObject) redisData.getData(), tClass);
             if (redisData.getExpireTime().isAfter(LocalDateTime.now())) {
-                return rst;
+                return rst; // case: is not expired
             }
         }
 
-        // case: not in the cache or expired
-
+        // case: expired or not in the redis
+        // need to retrieve the data from db
         // create a new thread to get the value from db
         if (setLock(id)) {
             CACHE_REBUILD_EXECUTOR.submit(() -> {
                 T result = dbCallBack.apply(id);
                 if (result == null) {
+                    // "" for preventing cache penetration
                     stringRedisTemplate.opsForValue().set(key, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
                 } else {
                     stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop2Redis(result)));
@@ -72,9 +63,11 @@ public class CacheClient {
             });
         }
 
+        // case: return the expired data or not-in-cache data (regardless this data whether really in the db)
         if (json == null) {
             return null;
         }
+
         RedisData redisData = JSONUtil.toBean(json, RedisData.class);
         return JSONUtil.toBean((JSONObject) redisData.getData(), tClass);
     }
